@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: temujanji
+      POSTGRES_PASSWORD: temujanji
+      POSTGRES_DB: temujanji
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  api:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm
+    working_dir: /app
+    command: uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://temujanji:temujanji@postgres:5432/temujanji
+    depends_on:
+      - postgres
+volumes:
+  pgdata:
