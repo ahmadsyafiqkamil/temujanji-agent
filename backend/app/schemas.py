@@ -1,8 +1,9 @@
+import uuid
 from datetime import date
 
 from pydantic import BaseModel, Field
 
-from backend.app.models import StaffRole
+from backend.app.models import AppointmentStatus, StaffRole
 
 
 class LoginRequest(BaseModel):
@@ -53,3 +54,36 @@ class AvailabilityDay(BaseModel):
 class AvailabilityResponse(BaseModel):
     service_id: int
     availability: list[AvailabilityDay]
+
+
+class AppointmentCreateRequest(BaseModel):
+    antrian_service_id: int
+    full_name: str = Field(min_length=1, max_length=255)
+    document_number: str = Field(min_length=1, max_length=128)
+    appointment_date: date
+    telegram_user_id: str | None = Field(default=None, max_length=128)
+
+
+class AppointmentCreateResponse(BaseModel):
+    id: uuid.UUID
+    booking_code: str
+    access_token: str
+    appointment_date: date
+    status: AppointmentStatus
+    magic_url: str
+
+
+class AppointmentTokenResponse(BaseModel):
+    id: uuid.UUID
+    booking_code: str
+    antrian_service_id: int
+    full_name: str
+    appointment_date: date
+    status: AppointmentStatus
+    qr_payload: str
+
+
+class AppointmentCancelResponse(BaseModel):
+    id: uuid.UUID
+    booking_code: str
+    status: AppointmentStatus
