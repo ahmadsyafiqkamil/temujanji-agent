@@ -89,6 +89,10 @@ class AppointmentCancelResponse(BaseModel):
     status: AppointmentStatus
 
 
+class AppointmentCancelByCodeRequest(BaseModel):
+    booking_code: str = Field(min_length=1, max_length=64)
+
+
 class CheckInRequest(BaseModel):
     qr_payload: str = Field(min_length=1)
 

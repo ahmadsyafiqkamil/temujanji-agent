@@ -67,6 +67,7 @@ class FakeSession:
             appointments = list(self.appointments.values())
             for parameter_name, attribute_name in (
                 ("id_1", "id"),
+                ("booking_code_1", "booking_code"),
                 ("access_token_1", "access_token"),
                 ("document_number_1", "document_number"),
                 ("antrian_service_id_1", "antrian_service_id"),
@@ -285,3 +286,18 @@ async def test_cancel_rejects_non_booked_appointment(api_client):
     assert first.status_code == 200
     assert second.status_code == 409
     assert second.json()["detail"] == "Only booked appointments can be cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_by_booking_code(api_client):
+    day = seed_bookable_quota(api_client)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post("/api/v1/appointments", json=appointment_payload(day))
+        response = await client.post(
+            "/api/v1/appointments/cancel-by-code",
+            json={"booking_code": created.json()["booking_code"]},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == AppointmentStatus.CANCELLED.value

@@ -33,5 +33,37 @@ services:
       NEXT_PUBLIC_API_BASE: http://localhost:8000
     depends_on:
       - api
+  agent:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm
+    working_dir: /app
+    command: uv run adk web --host 0.0.0.0 --port 8001 --session_service_uri=memory:// /app/agent
+    volumes:
+      - ./:/app
+    ports:
+      - "8001:8001"
+    environment:
+      TEMUJANJI_API_BASE: http://api:8000/api/v1
+      AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-key}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      PUBLIC_WEB_BASE: ${PUBLIC_WEB_BASE:-http://localhost:3000}
+    depends_on:
+      - api
+  telegram:
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm
+    working_dir: /app
+    command: uv run uvicorn telegram.bot:app --host 0.0.0.0 --port 8002
+    volumes:
+      - ./:/app
+    ports:
+      - "8002:8002"
+    environment:
+      TEMUJANJI_API_BASE: http://api:8000/api/v1
+      AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-key}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      PUBLIC_WEB_BASE: ${PUBLIC_WEB_BASE:-http://localhost:3000}
+    depends_on:
+      - api
 volumes:
   pgdata:

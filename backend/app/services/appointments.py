@@ -157,5 +157,21 @@ async def cancel_appointment(
     return appointment
 
 
+async def cancel_appointment_by_booking_code(
+    session: AsyncSession, *, booking_code: str
+) -> Appointment:
+    appointment = (
+        await session.exec(
+            select(Appointment).where(Appointment.booking_code == booking_code)
+        )
+    ).first()
+    if appointment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Appointment not found",
+        )
+    return await cancel_appointment(session, appointment_id=appointment.id)
+
+
 def qr_payload(appointment: Appointment) -> str:
     return make_qr_payload(appointment.booking_code, settings.qr_signing_secret)

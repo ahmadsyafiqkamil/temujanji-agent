@@ -9,6 +9,7 @@ from backend.app.db import get_session
 from backend.app.deps import require_agent_api_key
 from backend.app.models import Appointment
 from backend.app.schemas import (
+    AppointmentCancelByCodeRequest,
     AppointmentCancelResponse,
     AppointmentCreateRequest,
     AppointmentCreateResponse,
@@ -16,6 +17,7 @@ from backend.app.schemas import (
 )
 from backend.app.services.appointments import (
     cancel_appointment,
+    cancel_appointment_by_booking_code,
     create_appointment,
     get_appointment_by_token,
     qr_payload,
@@ -83,6 +85,25 @@ async def cancel(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AppointmentCancelResponse:
     appointment = await cancel_appointment(session, appointment_id=appointment_id)
+    return AppointmentCancelResponse(
+        id=appointment.id,
+        booking_code=appointment.booking_code,
+        status=appointment.status,
+    )
+
+
+@router.post(
+    "/cancel-by-code",
+    response_model=AppointmentCancelResponse,
+    dependencies=[Depends(require_agent_api_key)],
+)
+async def cancel_by_code(
+    payload: AppointmentCancelByCodeRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AppointmentCancelResponse:
+    appointment = await cancel_appointment_by_booking_code(
+        session, booking_code=payload.booking_code
+    )
     return AppointmentCancelResponse(
         id=appointment.id,
         booking_code=appointment.booking_code,
