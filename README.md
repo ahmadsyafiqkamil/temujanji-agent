@@ -90,7 +90,8 @@ Jangan gunakan URL ngrok atau token pembangunan dalam persekitaran produksi.
 ## Smoke E2E
 
 Dengan API, Postgres, dan Antrian berjalan, skrip ini log masuk sebagai admin,
-sync perkhidmatan, membuka/mengemas kini kuota esok, mencipta temujanji melalui
+sync perkhidmatan, membuka/mengemas kini kuota hari ini mengikut zon masa Dubai,
+mencipta temujanji melalui
 agent API key, membaca magic token, dan check-in jika endpoint kesihatan Antrian
 tersedia:
 

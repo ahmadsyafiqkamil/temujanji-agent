@@ -29,6 +29,7 @@ async def require_staff(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> StaffUser:
+    """Require an authenticated staff-facing user; admins are a staff superset."""
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

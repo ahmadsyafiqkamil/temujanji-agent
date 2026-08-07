@@ -13,7 +13,6 @@ export default function StaffLoginPage() {
     const form = new FormData(event.currentTarget);
     try {
       const login = await api.login(String(form.get("username")), String(form.get("password")));
-      if (login.role !== "staff") throw new Error("Akaun ini bukan akaun petugas.");
       sessionStorage.setItem("staffToken", login.access_token);
       router.push("/staff/scan");
     } catch (reason) {
@@ -23,7 +22,7 @@ export default function StaffLoginPage() {
 
   return (
     <main className="mx-auto max-w-md p-6">
-      <h1 className="text-3xl font-bold">Log masuk petugas</h1>
+      <h1 className="text-3xl font-bold">Log masuk petugas atau pentadbir</h1>
       <form className="mt-6 space-y-4 rounded-xl bg-white p-5 shadow-sm" onSubmit={submit}>
         <input className="w-full rounded border p-3" name="username" placeholder="Nama pengguna" required />
         <input className="w-full rounded border p-3" name="password" placeholder="Kata laluan" type="password" required />

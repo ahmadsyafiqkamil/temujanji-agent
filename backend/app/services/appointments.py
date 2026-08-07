@@ -128,6 +128,12 @@ async def cancel_appointment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Appointment not found",
         )
+    return await _cancel_locked_appointment(session, appointment=appointment)
+
+
+async def _cancel_locked_appointment(
+    session: AsyncSession, *, appointment: Appointment
+) -> Appointment:
     if appointment.status is not AppointmentStatus.BOOKED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -162,7 +168,9 @@ async def cancel_appointment_by_booking_code(
 ) -> Appointment:
     appointment = (
         await session.exec(
-            select(Appointment).where(Appointment.booking_code == booking_code)
+            select(Appointment)
+            .where(Appointment.booking_code == booking_code)
+            .with_for_update()
         )
     ).first()
     if appointment is None:
@@ -170,7 +178,7 @@ async def cancel_appointment_by_booking_code(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Appointment not found",
         )
-    return await cancel_appointment(session, appointment_id=appointment.id)
+    return await _cancel_locked_appointment(session, appointment=appointment)
 
 
 def qr_payload(appointment: Appointment) -> str:

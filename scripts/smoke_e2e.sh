@@ -11,8 +11,8 @@ json_field() {
   uv run python -c 'import json, sys; print(json.loads(sys.stdin.read())[sys.argv[1]])' "$1"
 }
 
-tomorrow() {
-  uv run python -c 'from datetime import datetime, timedelta; from zoneinfo import ZoneInfo; print((datetime.now(ZoneInfo("Asia/Dubai")).date() + timedelta(days=1)).isoformat())'
+today() {
+  uv run python -c 'from datetime import datetime; from zoneinfo import ZoneInfo; print(datetime.now(ZoneInfo("Asia/Dubai")).date().isoformat())'
 }
 
 echo "Checking API health..."
@@ -43,7 +43,7 @@ service_id="$(
   printf '%s' "$services_response" | uv run python -c \
     'import json, sys; print(next(service["antrian_service_id"] for service in json.load(sys.stdin) if service["is_active"]))'
 )"
-appointment_date="$(tomorrow)"
+appointment_date="$(today)"
 smoke_document="SMOKE-$(date +%s)"
 
 echo "Opening quota for ${appointment_date}..."
