@@ -83,6 +83,16 @@ class AppointmentTokenResponse(BaseModel):
     qr_payload: str
 
 
+class AdminAppointmentResponse(BaseModel):
+    id: uuid.UUID
+    booking_code: str
+    antrian_service_id: int
+    full_name: str
+    appointment_date: date
+    status: AppointmentStatus
+    qr_payload: str
+
+
 class AppointmentCancelResponse(BaseModel):
     id: uuid.UUID
     booking_code: str

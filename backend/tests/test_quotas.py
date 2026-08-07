@@ -6,7 +6,14 @@ from httpx import ASGITransport, AsyncClient, MockTransport, Request, Response
 from backend.app.db import get_session
 from backend.app.deps import require_admin, require_agent_api_key
 from backend.app.main import app
-from backend.app.models import DailyQuota, ServiceCache, StaffRole, StaffUser
+from backend.app.models import (
+    Appointment,
+    AppointmentStatus,
+    DailyQuota,
+    ServiceCache,
+    StaffRole,
+    StaffUser,
+)
 from backend.app.services.antrian_client import AntrianClient
 
 
@@ -25,6 +32,7 @@ class FakeSession:
     def __init__(self) -> None:
         self.services: dict[int, ServiceCache] = {}
         self.quotas: dict[int, DailyQuota] = {}
+        self.appointments: dict[object, Appointment] = {}
         self.next_quota_id = 1
 
     async def get(self, model: type[object], identifier: int) -> object | None:
@@ -32,6 +40,8 @@ class FakeSession:
             return self.services.get(identifier)
         if model is DailyQuota:
             return self.quotas.get(identifier)
+        if model is Appointment:
+            return self.appointments.get(identifier)
         return None
 
     async def exec(self, statement: object) -> FakeResult:
@@ -43,6 +53,22 @@ class FakeSession:
             return FakeResult(services)
         if entity is DailyQuota:
             return FakeResult(list(self.quotas.values()))
+        if entity is Appointment:
+            appointments = list(self.appointments.values())
+            parameters = statement.compile().params
+            for parameter_name, attribute_name in (
+                ("appointment_date_1", "appointment_date"),
+                ("antrian_service_id_1", "antrian_service_id"),
+                ("status_1", "status"),
+            ):
+                if parameter_name in parameters:
+                    appointments = [
+                        appointment
+                        for appointment in appointments
+                        if getattr(appointment, attribute_name)
+                        == parameters[parameter_name]
+                    ]
+            return FakeResult(appointments)
         return FakeResult([])
 
     def add(self, value: object) -> None:
@@ -53,6 +79,8 @@ class FakeSession:
                 value.id = self.next_quota_id
                 self.next_quota_id += 1
             self.quotas[value.id] = value
+        if isinstance(value, Appointment):
+            self.appointments[value.id] = value
 
     async def delete(self, quota: DailyQuota) -> None:
         assert quota.id is not None
@@ -181,6 +209,48 @@ async def test_rejects_capacity_below_existing_bookings(api_client):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Capacity cannot be below booked_count"
+
+
+@pytest.mark.asyncio
+async def test_admin_lists_appointments_with_filters(api_client):
+    booked = Appointment(
+        booking_code="KJRI-BOOKED",
+        access_token="booked-token",
+        antrian_service_id=7,
+        full_name="Siti Aminah",
+        document_number="A1234567",
+        appointment_date=date(2026, 8, 10),
+    )
+    cancelled = Appointment(
+        booking_code="KJRI-CANCELLED",
+        access_token="cancelled-token",
+        antrian_service_id=8,
+        full_name="Ahmad Fauzi",
+        document_number="B7654321",
+        appointment_date=date(2026, 8, 11),
+        status=AppointmentStatus.CANCELLED,
+    )
+    api_client.add(booked)
+    api_client.add(cancelled)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        filtered = await client.get(
+            "/api/v1/admin/appointments",
+            params={"date": "2026-08-10", "service_id": 7, "status": "booked"},
+        )
+
+    assert filtered.status_code == 200
+    assert filtered.json() == [
+        {
+            "id": str(booked.id),
+            "booking_code": "KJRI-BOOKED",
+            "antrian_service_id": 7,
+            "full_name": "Siti Aminah",
+            "appointment_date": "2026-08-10",
+            "status": "booked",
+            "qr_payload": filtered.json()[0]["qr_payload"],
+        }
+    ]
 
 
 @pytest.mark.asyncio

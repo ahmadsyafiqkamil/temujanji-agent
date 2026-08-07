@@ -1,17 +1,20 @@
+from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.app.db import get_session
 from backend.app.deps import require_admin
-from backend.app.models import DailyQuota
+from backend.app.models import Appointment, AppointmentStatus, DailyQuota
 from backend.app.schemas import (
+    AdminAppointmentResponse,
     QuotaCreateRequest,
     QuotaResponse,
     QuotaUpdateRequest,
 )
+from backend.app.services.appointments import qr_payload
 from backend.app.services.quota import create_quota, update_quota_capacity
 
 router = APIRouter(
@@ -30,6 +33,42 @@ def as_quota_response(quota: DailyQuota) -> QuotaResponse:
         capacity=quota.capacity,
         booked_count=quota.booked_count,
     )
+
+
+def as_admin_appointment_response(appointment: Appointment) -> AdminAppointmentResponse:
+    return AdminAppointmentResponse(
+        id=appointment.id,
+        booking_code=appointment.booking_code,
+        antrian_service_id=appointment.antrian_service_id,
+        full_name=appointment.full_name,
+        appointment_date=appointment.appointment_date,
+        status=appointment.status,
+        qr_payload=qr_payload(appointment),
+    )
+
+
+@router.get("/appointments", response_model=list[AdminAppointmentResponse])
+async def list_appointments(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    appointment_date: Annotated[date | None, Query(alias="date")] = None,
+    service_id: int | None = None,
+    appointment_status: Annotated[
+        AppointmentStatus | None, Query(alias="status")
+    ] = None,
+) -> list[AdminAppointmentResponse]:
+    statement = select(Appointment)
+    if appointment_date is not None:
+        statement = statement.where(Appointment.appointment_date == appointment_date)
+    if service_id is not None:
+        statement = statement.where(Appointment.antrian_service_id == service_id)
+    if appointment_status is not None:
+        statement = statement.where(Appointment.status == appointment_status)
+    appointments = (
+        await session.exec(
+            statement.order_by(Appointment.appointment_date, Appointment.created_at)
+        )
+    ).all()
+    return [as_admin_appointment_response(appointment) for appointment in appointments]
 
 
 @router.get("/quotas", response_model=list[QuotaResponse])
