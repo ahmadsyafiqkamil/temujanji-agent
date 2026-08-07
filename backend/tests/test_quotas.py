@@ -1,0 +1,210 @@
+from datetime import date
+
+import pytest
+from httpx import ASGITransport, AsyncClient, MockTransport, Request, Response
+
+from backend.app.db import get_session
+from backend.app.deps import require_admin, require_agent_api_key
+from backend.app.main import app
+from backend.app.models import DailyQuota, ServiceCache, StaffRole, StaffUser
+from backend.app.services.antrian_client import AntrianClient
+
+
+class FakeResult:
+    def __init__(self, values: list[object]) -> None:
+        self.values = values
+
+    def all(self) -> list[object]:
+        return self.values
+
+    def first(self) -> object | None:
+        return self.values[0] if self.values else None
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.services: dict[int, ServiceCache] = {}
+        self.quotas: dict[int, DailyQuota] = {}
+        self.next_quota_id = 1
+
+    async def get(self, model: type[object], identifier: int) -> object | None:
+        if model is ServiceCache:
+            return self.services.get(identifier)
+        if model is DailyQuota:
+            return self.quotas.get(identifier)
+        return None
+
+    async def exec(self, statement: object) -> FakeResult:
+        entity = statement.column_descriptions[0]["entity"]
+        if entity is ServiceCache:
+            services = list(self.services.values())
+            if "is_active" in str(statement):
+                services = [service for service in services if service.is_active]
+            return FakeResult(services)
+        if entity is DailyQuota:
+            return FakeResult(list(self.quotas.values()))
+        return FakeResult([])
+
+    def add(self, value: object) -> None:
+        if isinstance(value, ServiceCache):
+            self.services[value.antrian_service_id] = value
+        if isinstance(value, DailyQuota):
+            if value.id is None:
+                value.id = self.next_quota_id
+                self.next_quota_id += 1
+            self.quotas[value.id] = value
+
+    async def delete(self, quota: DailyQuota) -> None:
+        assert quota.id is not None
+        del self.quotas[quota.id]
+
+    async def commit(self) -> None:
+        return None
+
+    async def refresh(self, _: object) -> None:
+        return None
+
+
+class FakeAntrianClient:
+    async def list_services(self) -> list[dict[str, object]]:
+        return [
+            {"id": 7, "code": "PAS", "name": "Paspor", "is_active": True},
+            {"id": 8, "code": "VISA", "name": "Visa", "is_active": False},
+        ]
+
+
+@pytest.fixture
+def api_client():
+    session = FakeSession()
+
+    async def override_admin() -> StaffUser:
+        return StaffUser(
+            id=1,
+            username="admin",
+            password_hash="unused",
+            role=StaffRole.ADMIN,
+        )
+
+    async def override_agent_key() -> None:
+        return None
+
+    async def override_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[require_admin] = override_admin
+    app.dependency_overrides[require_agent_api_key] = override_agent_key
+
+    yield session
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_admin_can_create_quota_and_availability_returns_remaining(api_client):
+    api_client.services[7] = ServiceCache(
+        antrian_service_id=7,
+        code="PAS",
+        name="Paspor",
+        is_active=True,
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create_response = await client.post(
+            "/api/v1/admin/quotas",
+            json={"antrian_service_id": 7, "day": "2026-08-10", "capacity": 2},
+        )
+        availability_response = await client.get(
+            "/api/v1/availability",
+            params={
+                "service_id": 7,
+                "from": "2026-08-10",
+                "to": "2026-08-11",
+            },
+        )
+
+    assert create_response.status_code == 201
+    assert availability_response.status_code == 200
+    assert availability_response.json() == {
+        "service_id": 7,
+        "availability": [{"day": "2026-08-10", "remaining": 2}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_upserts_services_and_lists_only_active_services(api_client):
+    from backend.app.routers.services import get_antrian_client
+
+    api_client.services[7] = ServiceCache(
+        antrian_service_id=7,
+        code="OLD",
+        name="Old name",
+        is_active=False,
+    )
+    app.dependency_overrides[get_antrian_client] = FakeAntrianClient
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        sync_response = await client.post("/api/v1/services/sync")
+        services_response = await client.get("/api/v1/services")
+
+    assert sync_response.status_code == 200
+    assert sync_response.json() == {"synced": 2}
+    assert api_client.services[7].name == "Paspor"
+    assert services_response.status_code == 200
+    assert services_response.json() == [
+        {
+            "antrian_service_id": 7,
+            "code": "PAS",
+            "name": "Paspor",
+            "is_active": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rejects_capacity_below_existing_bookings(api_client):
+    api_client.services[7] = ServiceCache(
+        antrian_service_id=7,
+        code="PAS",
+        name="Paspor",
+        is_active=True,
+    )
+    api_client.quotas[1] = DailyQuota(
+        id=1,
+        antrian_service_id=7,
+        day=date(2026, 8, 10),
+        capacity=3,
+        booked_count=2,
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.patch("/api/v1/admin/quotas/1", json={"capacity": 1})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Capacity cannot be below booked_count"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [{"id": 7, "code": "PAS", "name": "Paspor", "is_active": True}],
+        {
+            "services": [
+                {"id": 7, "code": "PAS", "name": "Paspor", "is_active": True}
+            ]
+        },
+    ],
+)
+async def test_antrian_client_accepts_list_and_wrapped_service_responses(payload):
+    def handler(request: Request) -> Response:
+        assert request.url.path == "/api/public/services/"
+        return Response(200, json=payload)
+
+    client = AntrianClient(
+        base_url="https://antrian.example/api",
+        transport=MockTransport(handler),
+    )
+
+    assert await client.list_services() == [
+        {"id": 7, "code": "PAS", "name": "Paspor", "is_active": True}
+    ]

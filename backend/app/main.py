@@ -5,7 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config import settings
 from backend.app.db import bootstrap_admin
+from backend.app.routers.admin import router as admin_router
 from backend.app.routers.auth import router as auth_router
+from backend.app.routers.services import availability_router
+from backend.app.routers.services import router as services_router
 
 
 @asynccontextmanager
@@ -23,6 +26,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(services_router, prefix="/api/v1")
+app.include_router(availability_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1")
 
 
 @app.get("/health")

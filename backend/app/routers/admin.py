@@ -1,0 +1,101 @@
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from backend.app.db import get_session
+from backend.app.deps import require_admin
+from backend.app.models import DailyQuota
+from backend.app.schemas import (
+    QuotaCreateRequest,
+    QuotaResponse,
+    QuotaUpdateRequest,
+)
+from backend.app.services.quota import create_quota, update_quota_capacity
+
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin)],
+)
+
+
+def as_quota_response(quota: DailyQuota) -> QuotaResponse:
+    assert quota.id is not None
+    return QuotaResponse(
+        id=quota.id,
+        antrian_service_id=quota.antrian_service_id,
+        day=quota.day,
+        capacity=quota.capacity,
+        booked_count=quota.booked_count,
+    )
+
+
+@router.get("/quotas", response_model=list[QuotaResponse])
+async def list_quotas(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[QuotaResponse]:
+    quotas = (
+        await session.exec(
+            select(DailyQuota).order_by(
+                DailyQuota.day,
+                DailyQuota.antrian_service_id,
+            )
+        )
+    ).all()
+    return [as_quota_response(quota) for quota in quotas]
+
+
+@router.post(
+    "/quotas",
+    response_model=QuotaResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_quota(
+    payload: QuotaCreateRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> QuotaResponse:
+    quota = await create_quota(
+        session,
+        antrian_service_id=payload.antrian_service_id,
+        day=payload.day,
+        capacity=payload.capacity,
+    )
+    return as_quota_response(quota)
+
+
+@router.patch("/quotas/{quota_id}", response_model=QuotaResponse)
+async def update_quota(
+    quota_id: int,
+    payload: QuotaUpdateRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> QuotaResponse:
+    quota = await update_quota_capacity(
+        session,
+        quota_id=quota_id,
+        capacity=payload.capacity,
+    )
+    return as_quota_response(quota)
+
+
+@router.delete("/quotas/{quota_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_quota(
+    quota_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    quota = await session.get(DailyQuota, quota_id)
+    if quota is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Quota not found",
+        )
+    if quota.booked_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete a quota with bookings",
+        )
+
+    await session.delete(quota)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
