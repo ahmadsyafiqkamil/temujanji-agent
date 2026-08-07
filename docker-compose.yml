@@ -21,5 +21,17 @@ services:
       DATABASE_URL: postgresql+asyncpg://temujanji:temujanji@postgres:5432/temujanji
     depends_on:
       - postgres
+  web:
+    image: node:22-bookworm
+    working_dir: /app/frontend
+    command: sh -c "corepack enable && pnpm install && pnpm dev --hostname 0.0.0.0"
+    volumes:
+      - ./:/app
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8000
+    depends_on:
+      - api
 volumes:
   pgdata:
