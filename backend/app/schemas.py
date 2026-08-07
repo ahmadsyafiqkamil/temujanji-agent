@@ -87,3 +87,16 @@ class AppointmentCancelResponse(BaseModel):
     id: uuid.UUID
     booking_code: str
     status: AppointmentStatus
+
+
+class CheckInRequest(BaseModel):
+    qr_payload: str = Field(min_length=1)
+
+
+class CheckInResponse(BaseModel):
+    booking_code: str
+    antrian_service_id: int
+    full_name: str
+    appointment_date: date
+    status: AppointmentStatus
+    queue_number: str
