@@ -86,6 +86,7 @@ def _database_from_env() -> dict[str, object]:
         "PASSWORD": parsed.password or "",
         "HOST": parsed.hostname or "localhost",
         "PORT": str(parsed.port or 5432),
+        "OPTIONS": {"options": "-c search_path=temujanji,public"},
     }
 
 
