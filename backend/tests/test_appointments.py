@@ -4,137 +4,31 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
-from backend.app.db import get_session
-from backend.app.deps import require_agent_api_key
-from backend.app.main import app
-from backend.app.models import (
-    Appointment,
-    AppointmentStatus,
-    DailyQuota,
-    ServiceCache,
-)
-from backend.app.services.qr import make_qr_payload
-
-
-class FakeResult:
-    def __init__(self, values: list[object]) -> None:
-        self.values = values
-
-    def all(self) -> list[object]:
-        return self.values
-
-    def first(self) -> object | None:
-        return self.values[0] if self.values else None
-
-
-class FakeSession:
-    """In-memory double; it records, but cannot enforce SQL row locks."""
-
-    def __init__(self) -> None:
-        self.services: dict[int, ServiceCache] = {}
-        self.quotas: dict[int, DailyQuota] = {}
-        self.appointments: dict[object, Appointment] = {}
-        self.next_quota_id = 1
-
-    async def get(self, model: type[object], identifier: object) -> object | None:
-        if model is ServiceCache:
-            return self.services.get(identifier)
-        if model is DailyQuota:
-            return self.quotas.get(identifier)
-        if model is Appointment:
-            return self.appointments.get(identifier)
-        return None
-
-    async def exec(self, statement: object) -> FakeResult:
-        entity = statement.column_descriptions[0]["entity"]
-        parameters = statement.compile().params
-        if entity is DailyQuota:
-            quotas = list(self.quotas.values())
-            service_id = parameters.get("antrian_service_id_1")
-            day = parameters.get("day_1")
-            if service_id is not None:
-                quotas = [
-                    quota
-                    for quota in quotas
-                    if quota.antrian_service_id == service_id
-                ]
-            if day is not None:
-                quotas = [quota for quota in quotas if quota.day == day]
-            return FakeResult(quotas)
-        if entity is Appointment:
-            appointments = list(self.appointments.values())
-            for parameter_name, attribute_name in (
-                ("id_1", "id"),
-                ("booking_code_1", "booking_code"),
-                ("access_token_1", "access_token"),
-                ("document_number_1", "document_number"),
-                ("antrian_service_id_1", "antrian_service_id"),
-                ("appointment_date_1", "appointment_date"),
-                ("status_1", "status"),
-            ):
-                if parameter_name in parameters:
-                    appointments = [
-                        appointment
-                        for appointment in appointments
-                        if getattr(appointment, attribute_name)
-                        == parameters[parameter_name]
-                    ]
-            return FakeResult(appointments)
-        return FakeResult([])
-
-    def add(self, value: object) -> None:
-        if isinstance(value, DailyQuota):
-            if value.id is None:
-                value.id = self.next_quota_id
-                self.next_quota_id += 1
-            self.quotas[value.id] = value
-        if isinstance(value, Appointment):
-            self.appointments[value.id] = value
-
-    async def commit(self) -> None:
-        return None
-
-    async def refresh(self, _: object) -> None:
-        return None
-
-
-@pytest.fixture
-def api_client():
-    session = FakeSession()
-
-    async def override_agent_key() -> None:
-        return None
-
-    async def override_session():
-        yield session
-
-    app.dependency_overrides[get_session] = override_session
-    app.dependency_overrides[require_agent_api_key] = override_agent_key
-    yield session
-    app.dependency_overrides.clear()
+from appointments.qr import make_qr_payload
+from catalog.models import DailyQuota, ServiceCache
 
 
 def dubai_today() -> date:
     return datetime.now(ZoneInfo("Asia/Dubai")).date()
 
 
-def seed_bookable_quota(session: FakeSession, *, capacity: int = 2) -> date:
+def seed_bookable_quota(*, capacity: int = 2, booked_count: int = 0) -> DailyQuota:
     day = dubai_today()
-    session.services[7] = ServiceCache(
+    ServiceCache.objects.get_or_create(
         antrian_service_id=7,
-        code="PAS",
-        name="Paspor",
-        is_active=True,
+        defaults={"code": "PAS", "name": "Paspor", "is_active": True},
     )
-    session.quotas[1] = DailyQuota(
-        id=1,
+    quota, _ = DailyQuota.objects.get_or_create(
         antrian_service_id=7,
         day=day,
-        capacity=capacity,
+        defaults={"capacity": capacity, "booked_count": booked_count},
     )
-    return day
+    if quota.capacity != capacity or quota.booked_count != booked_count:
+        quota.capacity = capacity
+        quota.booked_count = booked_count
+        quota.save(update_fields=["capacity", "booked_count"])
+    return quota
 
 
 def appointment_payload(day: date) -> dict[str, str | int]:
@@ -147,65 +41,83 @@ def appointment_payload(day: date) -> dict[str, str | int]:
     }
 
 
-@pytest.mark.asyncio
-async def test_create_increments_quota_and_returns_magic_url(api_client):
-    day = seed_bookable_quota(api_client)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/appointments", json=appointment_payload(day))
+@pytest.mark.django_db
+def test_create_increments_quota_and_returns_magic_url(agent_client):
+    quota = seed_bookable_quota()
+    response = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day),
+        format="json",
+    )
 
     assert response.status_code == 201
     body = response.json()
     assert body["booking_code"].startswith("KJRI-")
     assert body["magic_url"] == f"http://localhost:3000/j/{body['access_token']}"
     assert body["qr_payload"]
-    assert api_client.quotas[1].booked_count == 1
+    quota.refresh_from_db()
+    assert quota.booked_count == 1
 
 
-@pytest.mark.asyncio
-async def test_create_rejects_duplicate_active_booking(api_client):
-    day = seed_bookable_quota(api_client)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        first = await client.post("/api/v1/appointments", json=appointment_payload(day))
-        second = await client.post("/api/v1/appointments", json=appointment_payload(day))
+@pytest.mark.django_db
+def test_create_rejects_duplicate_active_booking(agent_client):
+    quota = seed_bookable_quota()
+    first = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day),
+        format="json",
+    )
+    second = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day),
+        format="json",
+    )
 
     assert first.status_code == 201
     assert second.status_code == 409
     assert second.json()["detail"] == "Active appointment already exists"
-    assert api_client.quotas[1].booked_count == 1
+    quota.refresh_from_db()
+    assert quota.booked_count == 1
 
 
-@pytest.mark.asyncio
-async def test_create_allows_different_document_on_same_service_and_day(api_client):
-    day = seed_bookable_quota(api_client)
-    second_payload = appointment_payload(day)
+@pytest.mark.django_db
+def test_create_allows_different_document_on_same_service_and_day(agent_client):
+    quota = seed_bookable_quota()
+    second_payload = appointment_payload(quota.day)
     second_payload["document_number"] = "B7654321"
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        first = await client.post("/api/v1/appointments", json=appointment_payload(day))
-        second = await client.post("/api/v1/appointments", json=second_payload)
+    first = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day),
+        format="json",
+    )
+    second = agent_client.post("/api/v1/appointments", second_payload, format="json")
 
     assert first.status_code == 201
     assert second.status_code == 201
-    assert api_client.quotas[1].booked_count == 2
+    quota.refresh_from_db()
+    assert quota.booked_count == 2
 
 
-@pytest.mark.asyncio
-async def test_create_rejects_missing_or_full_quota(api_client):
+@pytest.mark.django_db
+def test_create_rejects_missing_or_full_quota(agent_client):
     day = dubai_today()
-    api_client.services[7] = ServiceCache(
+    ServiceCache.objects.create(
         antrian_service_id=7,
         code="PAS",
         name="Paspor",
         is_active=True,
     )
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        missing = await client.post("/api/v1/appointments", json=appointment_payload(day))
-        seed_bookable_quota(api_client, capacity=1)
-        api_client.quotas[1].booked_count = 1
-        full = await client.post("/api/v1/appointments", json=appointment_payload(day))
+    missing = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(day),
+        format="json",
+    )
+    seed_bookable_quota(capacity=1, booked_count=1)
+    full = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(day),
+        format="json",
+    )
 
     assert missing.status_code == 400
     assert missing.json()["detail"] == "Quota is not open for this service and day"
@@ -213,29 +125,30 @@ async def test_create_rejects_missing_or_full_quota(api_client):
     assert full.json()["detail"] == "Quota is full"
 
 
-@pytest.mark.asyncio
-async def test_create_rejects_past_dubai_date(api_client):
-    day = seed_bookable_quota(api_client)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/api/v1/appointments",
-            json=appointment_payload(day - timedelta(days=1)),
-        )
+@pytest.mark.django_db
+def test_create_rejects_past_dubai_date(agent_client):
+    quota = seed_bookable_quota()
+    response = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day - timedelta(days=1)),
+        format="json",
+    )
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Appointment date cannot be in the past"
 
 
-@pytest.mark.asyncio
-async def test_by_token_is_public_and_hides_document_number(api_client):
-    day = seed_bookable_quota(api_client)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        created = await client.post("/api/v1/appointments", json=appointment_payload(day))
-        response = await client.get(
-            f"/api/v1/appointments/by-token/{created.json()['access_token']}"
-        )
+@pytest.mark.django_db
+def test_by_token_is_public_and_hides_document_number(agent_client, api_client):
+    quota = seed_bookable_quota()
+    created = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day),
+        format="json",
+    )
+    response = api_client.get(
+        f"/api/v1/appointments/by-token/{created.json()['access_token']}"
+    )
 
     assert response.status_code == 200
     assert response.json()["full_name"] == "Siti Aminah"
@@ -243,12 +156,9 @@ async def test_by_token_is_public_and_hides_document_number(api_client):
     assert response.json()["qr_payload"]
 
 
-@pytest.mark.asyncio
-async def test_by_token_rejects_unknown_token(api_client):
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/v1/appointments/by-token/unknown-token")
-
+@pytest.mark.django_db
+def test_by_token_rejects_unknown_token(api_client):
+    response = api_client.get("/api/v1/appointments/by-token/unknown-token")
     assert response.status_code == 404
 
 
@@ -260,45 +170,51 @@ def test_qr_payload_is_urlsafe_signed_booking_code():
     assert len(payload["s"]) == 16
 
 
-@pytest.mark.asyncio
-async def test_cancel_booked_appointment_decrements_quota(api_client):
-    day = seed_bookable_quota(api_client)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        created = await client.post("/api/v1/appointments", json=appointment_payload(day))
-        response = await client.post(
-            f"/api/v1/appointments/{created.json()['id']}/cancel"
-        )
+@pytest.mark.django_db
+def test_cancel_booked_appointment_decrements_quota(agent_client):
+    quota = seed_bookable_quota()
+    created = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day),
+        format="json",
+    )
+    response = agent_client.post(f"/api/v1/appointments/{created.json()['id']}/cancel")
 
     assert response.status_code == 200
-    assert response.json()["status"] == AppointmentStatus.CANCELLED.value
-    assert api_client.quotas[1].booked_count == 0
+    assert response.json()["status"] == "cancelled"
+    quota.refresh_from_db()
+    assert quota.booked_count == 0
 
 
-@pytest.mark.asyncio
-async def test_cancel_rejects_non_booked_appointment(api_client):
-    day = seed_bookable_quota(api_client)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        created = await client.post("/api/v1/appointments", json=appointment_payload(day))
-        first = await client.post(f"/api/v1/appointments/{created.json()['id']}/cancel")
-        second = await client.post(f"/api/v1/appointments/{created.json()['id']}/cancel")
+@pytest.mark.django_db
+def test_cancel_rejects_non_booked_appointment(agent_client):
+    quota = seed_bookable_quota()
+    created = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day),
+        format="json",
+    )
+    first = agent_client.post(f"/api/v1/appointments/{created.json()['id']}/cancel")
+    second = agent_client.post(f"/api/v1/appointments/{created.json()['id']}/cancel")
 
     assert first.status_code == 200
     assert second.status_code == 409
     assert second.json()["detail"] == "Only booked appointments can be cancelled"
 
 
-@pytest.mark.asyncio
-async def test_cancel_by_booking_code(api_client):
-    day = seed_bookable_quota(api_client)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        created = await client.post("/api/v1/appointments", json=appointment_payload(day))
-        response = await client.post(
-            "/api/v1/appointments/cancel-by-code",
-            json={"booking_code": created.json()["booking_code"]},
-        )
+@pytest.mark.django_db
+def test_cancel_by_booking_code(agent_client):
+    quota = seed_bookable_quota()
+    created = agent_client.post(
+        "/api/v1/appointments",
+        appointment_payload(quota.day),
+        format="json",
+    )
+    response = agent_client.post(
+        "/api/v1/appointments/cancel-by-code",
+        {"booking_code": created.json()["booking_code"]},
+        format="json",
+    )
 
     assert response.status_code == 200
-    assert response.json()["status"] == AppointmentStatus.CANCELLED.value
+    assert response.json()["status"] == "cancelled"

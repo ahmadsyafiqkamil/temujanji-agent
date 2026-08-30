@@ -36,8 +36,9 @@ docker compose exec backend python manage.py migrate
 # 2) Temujanji
 cd ../temujanji-agent
 docker compose up -d postgres api web
-uv run alembic -c backend/alembic.ini upgrade head
-docker compose restart api
+# migrate + bootstrap admin run inside the api container on start
+# If this machine already had the FastAPI Postgres volume, reset it:
+# docker compose down && docker volume rm temujanji-agent_pgdata && docker compose up -d postgres api web
 ```
 
 Layanan:
@@ -45,9 +46,9 @@ Layanan:
 | URL | Fungsi |
 |-----|--------|
 | http://localhost:8000/health | Health API |
-| http://localhost:8000/docs | OpenAPI |
+| http://localhost:8000/admin/ | Django admin |
 | http://localhost:3000 | Web (user / petugas / admin) |
-| http://localhost:8001 | ADK web (jika service `agent` dijalankan) |
+| http://localhost:8011 | ADK web (jika service `agent` dijalankan) |
 | http://localhost:8002 | Telegram webhook (jika service `telegram` dijalankan) |
 
 Login admin setelah bootstrap:
@@ -155,7 +156,7 @@ Variabel opsional: `API_BASE`, `AGENT_API_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWOR
 ## Stack singkat
 
 - Python 3.12+ dikelola **uv** (`pyproject.toml` + `uv.lock`)
-- FastAPI + PostgreSQL 16 + Alembic
+- Django 6 + DRF + SimpleJWT + PostgreSQL 16
 - Next.js (App Router) + pnpm
 - Google ADK 2.x + Telegram webhook
 - Integrasi Antrian lewat HTTP + API key
