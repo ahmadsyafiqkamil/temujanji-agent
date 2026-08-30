@@ -32,14 +32,16 @@ export default function QuotasPage() {
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formEl = event.currentTarget;
+    const data = new FormData(formEl);
     try {
       await api.createQuota(token(), {
-        antrian_service_id: Number(form.get("service")),
-        day: String(form.get("day")),
-        capacity: Number(form.get("capacity")),
+        antrian_service_id: Number(data.get("service")),
+        day: String(data.get("day")),
+        capacity: Number(data.get("capacity")),
       });
-      event.currentTarget.reset();
+      formEl.reset();
+      setMessage("");
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed");
