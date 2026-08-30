@@ -1,0 +1,8 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE SCHEMA IF NOT EXISTS konsuler;
+CREATE SCHEMA IF NOT EXISTS temujanji;
+
+GRANT ALL ON SCHEMA konsuler TO temujanji;
+GRANT ALL ON SCHEMA temujanji TO temujanji;
+GRANT ALL ON SCHEMA public TO temujanji;
