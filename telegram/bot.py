@@ -18,6 +18,12 @@ from google.genai import types
 
 from agent.agent import root_agent
 from agent.tools import set_telegram_user_id
+from telegram.routing import (
+    MENU_GREETING,
+    menu_keyboard,
+    route_inbound_text,
+    should_send_qr,
+)
 
 APP_NAME = "temujanji_telegram"
 WEBHOOK_BASE_URL = os.environ.get("WEBHOOK_BASE_URL", "")
@@ -49,11 +55,16 @@ def render_qr_png(payload: str) -> bytes:
     return buffer.getvalue()
 
 
-async def send_telegram_message(chat_id: int, text: str) -> None:
+async def send_telegram_message(
+    chat_id: int, text: str, *, reply_markup: dict[str, Any] | None = None
+) -> None:
+    payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(
             f"https://api.telegram.org/bot{_telegram_token()}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
+            json=payload,
         )
         response.raise_for_status()
 
@@ -89,10 +100,11 @@ async def run_agent(
         session_id=session_id,
     )
     if session is None:
-        await session_service.create_session(
+        session = await session_service.create_session(
             app_name=APP_NAME,
             user_id=adk_user_id,
             session_id=session_id,
+            state={"track": None},
         )
 
     set_telegram_user_id(str(user_id))
@@ -137,23 +149,48 @@ async def run_agent(
     return replies, bookings
 
 
-async def deliver_agent_result(chat_id: int, text: str, user_id: int) -> None:
+async def handle_inbound(chat_id: int, text: str, user_id: int) -> None:
+    session_id = f"telegram-{chat_id}"
+    adk_user_id = f"telegram-{user_id}"
+    session = await session_service.get_session(
+        app_name=APP_NAME,
+        user_id=adk_user_id,
+        session_id=session_id,
+    )
+    current_track = None
+    if session is not None:
+        current_track = session.state.get("track")
+    route = route_inbound_text(text, current_track)
+    if session is None:
+        session = await session_service.create_session(
+            app_name=APP_NAME,
+            user_id=adk_user_id,
+            session_id=session_id,
+            state={"track": route.track},
+        )
+    else:
+        session.state["track"] = route.track
+
+    if route.action == "show_menu":
+        await send_telegram_message(
+            chat_id, MENU_GREETING, reply_markup=menu_keyboard()
+        )
+        return
+
     replies, bookings = await run_agent(user_id, chat_id, text)
     for reply in replies:
-        await send_telegram_message(chat_id, reply)
+        await send_telegram_message(
+            chat_id, reply, reply_markup=menu_keyboard()
+        )
     for booking in bookings:
-        magic_url = booking["magic_url"]
-        qr_payload = booking["qr_payload"]
-        booking_code = booking["booking_code"]
-        if qr_payload:
-            await send_telegram_qr(
-                chat_id,
-                qr_payload=qr_payload,
-                booking_code=booking_code,
-                magic_url=magic_url,
-            )
-        else:
-            await send_telegram_message(chat_id, f"Your appointment link: {magic_url}")
+        if not should_send_qr(route.track, booking):
+            continue
+        await send_telegram_qr(
+            chat_id,
+            qr_payload=booking["qr_payload"],
+            booking_code=booking["booking_code"],
+            magic_url=booking["magic_url"],
+        )
 
 
 async def set_webhook(url: str) -> None:
@@ -246,7 +283,7 @@ async def webhook(
         return {"ok": True}
 
     try:
-        await deliver_agent_result(chat["id"], text, sender["id"])
+        await handle_inbound(chat["id"], text, sender["id"])
     except Exception as error:
         logger.exception("Failed to process Telegram update: %s", error)
         try:

@@ -31,6 +31,6 @@ dev = [
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "temujanji.settings_test"
 asyncio_mode = "auto"
-testpaths = ["backend/tests", "agent/tests"]
+testpaths = ["backend/tests", "agent/tests", "telegram/tests"]
 pythonpath = ["backend", "."]
 python_files = ["test_*.py"]
