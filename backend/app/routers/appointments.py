@@ -34,6 +34,7 @@ def as_create_response(appointment: Appointment) -> AppointmentCreateResponse:
         appointment_date=appointment.appointment_date,
         status=appointment.status,
         magic_url=f"{settings.public_web_base.rstrip('/')}/j/{appointment.access_token}",
+        qr_payload=qr_payload(appointment),
     )
 
 

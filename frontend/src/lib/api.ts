@@ -32,6 +32,13 @@ export type Quota = {
   booked_count: number;
 };
 
+export type Service = {
+  antrian_service_id: number;
+  code: string;
+  name: string;
+  is_active: boolean;
+};
+
 type ApiOptions = RequestInit & { token?: string };
 
 async function request<T>(path: string, options: ApiOptions = {}): Promise<T> {
@@ -72,6 +79,8 @@ export const api = {
       body: JSON.stringify({ qr_payload: qrPayload }),
     }),
   quotas: (token: string) => request<Quota[]>("/api/v1/admin/quotas", { token }),
+  adminServices: (token: string) =>
+    request<Service[]>("/api/v1/admin/services", { token }),
   createQuota: (token: string, quota: Omit<Quota, "id" | "booked_count">) =>
     request<Quota>("/api/v1/admin/quotas", {
       method: "POST",

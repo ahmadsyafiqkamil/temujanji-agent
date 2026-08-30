@@ -17,19 +17,35 @@ services:
       - ./:/app
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://temujanji:temujanji@postgres:5432/temujanji
+      # Antrian on host :8001 — containers must use host.docker.internal
+      ANTRIAN_BASE_URL: http://host.docker.internal:8001/api
+      ANTRIAN_API_KEY: ${ANTRIAN_API_KEY:-dev-antrian-key}
+      AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-key}
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
+      QR_SIGNING_SECRET: ${QR_SIGNING_SECRET:-dev-qr-secret}
+      PUBLIC_WEB_BASE: ${PUBLIC_WEB_BASE:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-admin123}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - postgres
   web:
     image: node:22-bookworm
     working_dir: /app/frontend
-    command: sh -c "corepack enable && pnpm install && pnpm dev --hostname 0.0.0.0"
+    command: sh -c "corepack enable && CI=true pnpm install --config.confirmModulesPurge=false && pnpm dev --hostname 0.0.0.0 --port 3000"
     volumes:
       - ./:/app
+      # Keep Linux node_modules out of the macOS bind mount (avoids TTY purge abort)
+      - web_node_modules:/app/frontend/node_modules
     ports:
       - "3000:3000"
     environment:
+      CI: "true"
       NEXT_PUBLIC_API_BASE: http://localhost:8000
     depends_on:
       - api
@@ -56,14 +72,28 @@ services:
       - ./:/app
     ports:
       - "8002:8002"
+    env_file:
+      - .env
     environment:
       TEMUJANJI_API_BASE: http://api:8000/api/v1
       AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-key}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      # GEMINI/GOOGLE/TELEGRAM secrets come from env_file (.env) only —
+      # do not interpolate from the host shell (stale exports override .env).
       PUBLIC_WEB_BASE: ${PUBLIC_WEB_BASE:-http://localhost:3000}
+      WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
+      NGROK_API: http://ngrok:4040
     depends_on:
       - api
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    ports:
+      - "4041:4040"
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    command: ["http", "http://telegram:8002"]
+    depends_on:
+      - telegram
 volumes:
   pgdata:
+  web_node_modules:

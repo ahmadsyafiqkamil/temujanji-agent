@@ -158,6 +158,7 @@ async def test_create_increments_quota_and_returns_magic_url(api_client):
     body = response.json()
     assert body["booking_code"].startswith("KJRI-")
     assert body["magic_url"] == f"http://localhost:3000/j/{body['access_token']}"
+    assert body["qr_payload"]
     assert api_client.quotas[1].booked_count == 1
 
 

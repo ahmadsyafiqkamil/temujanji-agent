@@ -16,18 +16,18 @@ export default function StaffLoginPage() {
       sessionStorage.setItem("staffToken", login.access_token);
       router.push("/staff/scan");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Log masuk gagal");
+      setError(reason instanceof Error ? reason.message : "Login failed");
     }
   }
 
   return (
     <main className="mx-auto max-w-md p-6">
-      <h1 className="text-3xl font-bold">Log masuk petugas atau pentadbir</h1>
+      <h1 className="text-3xl font-bold">Staff or admin login</h1>
       <form className="mt-6 space-y-4 rounded-xl bg-white p-5 shadow-sm" onSubmit={submit}>
-        <input className="w-full rounded border p-3" name="username" placeholder="Nama pengguna" required />
-        <input className="w-full rounded border p-3" name="password" placeholder="Kata laluan" type="password" required />
+        <input className="w-full rounded border p-3" name="username" placeholder="Username" required />
+        <input className="w-full rounded border p-3" name="password" placeholder="Password" type="password" required />
         {error && <p className="text-sm text-red-700">{error}</p>}
-        <button className="w-full rounded bg-teal-700 p-3 font-semibold text-white">Log masuk</button>
+        <button className="w-full rounded bg-teal-700 p-3 font-semibold text-white">Log in</button>
       </form>
     </main>
   );

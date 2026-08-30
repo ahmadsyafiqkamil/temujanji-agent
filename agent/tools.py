@@ -55,20 +55,28 @@ async def _request(
         return {"error": str(detail), "status_code": error.response.status_code}
     except httpx.HTTPError:
         return {
-            "error": "Layanan Temujanji sedang tidak dapat dihubungi. Coba lagi nanti.",
+            "error": "The appointment service is unreachable. Please try again later.",
             "status_code": 502,
         }
 
 
 async def list_services() -> dict[str, Any] | list[dict[str, Any]]:
-    """List currently active consular services. Call before asking the user to choose."""
+    """List active consular services.
+
+    Each item has antrian_service_id (use this as service_id in other tools),
+    code, and name. Menu position is NOT the same as antrian_service_id.
+    """
     return await _request("GET", "/services")
 
 
 async def get_availability(
     service_id: int, from_date: str, to_date: str
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Get remaining daily capacity for a service over ISO-8601 dates (YYYY-MM-DD)."""
+    """Get remaining daily capacity for a service over ISO-8601 dates (YYYY-MM-DD).
+
+    service_id must be antrian_service_id from list_services, never the user's
+    menu number.
+    """
     return await _request(
         "GET",
         "/availability",
@@ -79,11 +87,15 @@ async def get_availability(
 async def create_appointment(
     service_id: int, full_name: str, passport_number: str, appointment_date: str
 ) -> dict[str, Any] | list[dict[str, Any]]:
-    """Create a confirmed appointment after the user has explicitly confirmed all data."""
+    """Create a confirmed appointment after the user has explicitly confirmed all data.
+
+    service_id must be antrian_service_id from list_services, never the user's
+    menu number.
+    """
     telegram_user_id = _telegram_user_id.get()
     if telegram_user_id is None:
         return {
-            "error": "Identitas pengguna Telegram tidak tersedia.",
+            "error": "Telegram user identity is unavailable.",
             "status_code": 400,
         }
     return await _request(

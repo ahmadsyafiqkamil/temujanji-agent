@@ -15,7 +15,10 @@ dependencies = [
   "passlib[bcrypt]>=1.7.4",
   "python-multipart>=0.0.17",
   "bcrypt<5",
-  "google-adk>=2.6.2",
+  "google-adk[extensions]>=2.6.2",
+  "python-dotenv>=1.2.2",
+  "litellm>=1.84.0,<1.90.0",
+  "qrcode[pil]>=8.2",
 ]
 
 [dependency-groups]

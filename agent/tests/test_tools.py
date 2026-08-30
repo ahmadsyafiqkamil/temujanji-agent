@@ -53,6 +53,7 @@ async def test_create_appointment_binds_telegram_sender():
                 "id": "00000000-0000-0000-0000-000000000001",
                 "booking_code": "KJRI-ABC12345",
                 "magic_url": "https://web.test/j/token",
+                "qr_payload": "signed-qr-payload",
             },
         )
     )

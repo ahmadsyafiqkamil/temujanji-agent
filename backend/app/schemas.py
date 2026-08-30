@@ -71,6 +71,7 @@ class AppointmentCreateResponse(BaseModel):
     appointment_date: date
     status: AppointmentStatus
     magic_url: str
+    qr_payload: str
 
 
 class AppointmentTokenResponse(BaseModel):

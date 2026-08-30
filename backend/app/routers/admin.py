@@ -7,12 +7,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.app.db import get_session
 from backend.app.deps import require_admin
-from backend.app.models import Appointment, AppointmentStatus, DailyQuota
+from backend.app.models import Appointment, AppointmentStatus, DailyQuota, ServiceCache
 from backend.app.schemas import (
     AdminAppointmentResponse,
     QuotaCreateRequest,
     QuotaResponse,
     QuotaUpdateRequest,
+    ServiceResponse,
 )
 from backend.app.services.appointments import qr_payload
 from backend.app.services.quota import create_quota, update_quota_capacity
@@ -69,6 +70,28 @@ async def list_appointments(
         )
     ).all()
     return [as_admin_appointment_response(appointment) for appointment in appointments]
+
+
+@router.get("/services", response_model=list[ServiceResponse])
+async def list_admin_services(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[ServiceResponse]:
+    services = (
+        await session.exec(
+            select(ServiceCache)
+            .where(ServiceCache.is_active.is_(True))
+            .order_by(ServiceCache.name)
+        )
+    ).all()
+    return [
+        ServiceResponse(
+            antrian_service_id=service.antrian_service_id,
+            code=service.code,
+            name=service.name,
+            is_active=service.is_active,
+        )
+        for service in services
+    ]
 
 
 @router.get("/quotas", response_model=list[QuotaResponse])
