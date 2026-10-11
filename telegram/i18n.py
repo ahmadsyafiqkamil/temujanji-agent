@@ -12,6 +12,10 @@ MessageKey = Literal[
     "menu_kembali",
     "error",
     "qr_caption",
+    "closure_reply",
+    "handoff_confirmation",
+    "handoff_queued",
+    "bot_failure_cooldown",
 ]
 MenuAction = Literal["konsuler", "janji_temu", "kembali"]
 
@@ -42,6 +46,22 @@ STRINGS: dict[Locale, dict[MessageKey, str]] = {
             "Tunjukkan kode ini kepada petugas pada hari janji temu.\n"
             "Rincian: {url}"
         ),
+        "closure_reply": (
+            "Sama-sama, semoga informasi ini membantu! "
+            "Jika ada pertanyaan lain di lain waktu, jangan ragu menghubungi kami kembali."
+        ),
+        "handoff_confirmation": (
+            "Permintaan Anda telah diteruskan ke petugas KJRI. "
+            "Mohon tunggu balasan dari staf kami."
+        ),
+        "handoff_queued": (
+            "Permintaan Anda sedang dalam antrean petugas. "
+            "Mohon tunggu balasan staf kami."
+        ),
+        "bot_failure_cooldown": (
+            "Maaf, sistem sedang mengalami kendala. "
+            "Permintaan Anda sudah dalam antrean petugas."
+        ),
     },
     "en": {
         "greeting": (
@@ -57,6 +77,22 @@ STRINGS: dict[Locale, dict[MessageKey, str]] = {
             "Show this code to staff on your appointment day.\n"
             "Details: {url}"
         ),
+        "closure_reply": (
+            "You're welcome, hope this helps! "
+            "If you have other questions later, don't hesitate to contact us again."
+        ),
+        "handoff_confirmation": (
+            "Your request has been forwarded to KJRI staff. "
+            "Please wait for a reply from our staff."
+        ),
+        "handoff_queued": (
+            "Your request is in the staff queue. "
+            "Please wait for a reply from our staff."
+        ),
+        "bot_failure_cooldown": (
+            "Sorry, the system is experiencing issues. "
+            "Your request has been queued for a staff member."
+        ),
     },
     "ar": {
         "greeting": (
@@ -71,6 +107,22 @@ STRINGS: dict[Locale, dict[MessageKey, str]] = {
             "رمز QR للتسجيل لـ {code}\n"
             "أظهر هذا الرمز للموظف في يوم الموعد.\n"
             "التفاصيل: {url}"
+        ),
+        "closure_reply": (
+            "على الرحب والسعة، نأمل أن تكون هذه المعلومات مفيدة! "
+            "إذا كانت لديك أسئلة أخرى لاحقاً، فلا تتردد في التواصل معنا مرة أخرى."
+        ),
+        "handoff_confirmation": (
+            "تم إرسال طلبك إلى موظفي القنصلية. "
+            "يرجى انتظار رد موظفينا."
+        ),
+        "handoff_queued": (
+            "طلبك في قائمة انتظار الموظفين. "
+            "يرجى انتظار رد موظفينا."
+        ),
+        "bot_failure_cooldown": (
+            "عذراً، النظام يواجه مشكلة حالياً. "
+            "تم وضع طلبك في قائمة انتظار الموظفين."
         ),
     },
 }

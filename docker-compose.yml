@@ -11,6 +11,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/postgres/01_schemas.sql:/docker-entrypoint-initdb.d/01_schemas.sql:ro
       - ./scripts/postgres/02_konsuler_tables.sql:/docker-entrypoint-initdb.d/02_konsuler_tables.sql:ro
+      - ./scripts/postgres/03_konsuler_handoff.sql:/docker-entrypoint-initdb.d/03_konsuler_handoff.sql:ro
   api:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm
     working_dir: /app
@@ -92,6 +93,8 @@ services:
       PUBLIC_WEB_BASE: ${PUBLIC_WEB_BASE:-http://localhost:3000}
       WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL:-}
       NGROK_API: http://ngrok:4040
+      KJRI_STAFF_TELEGRAM_GROUP_ID: ${KJRI_STAFF_TELEGRAM_GROUP_ID:-}
+      HANDOFF_BOT_FAILURE_COOLDOWN_SEC: ${HANDOFF_BOT_FAILURE_COOLDOWN_SEC:-300}
     depends_on:
       - api
   ngrok:
