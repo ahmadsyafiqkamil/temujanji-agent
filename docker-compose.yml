@@ -29,7 +29,7 @@ services:
     environment:
       DATABASE_URL: postgresql://temujanji:temujanji@postgres:5432/temujanji
       DJANGO_DEBUG: "1"
-      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,api,0.0.0.0
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,api,0.0.0.0}
       # Antrian on host :8001 — containers must use host.docker.internal
       ANTRIAN_BASE_URL: http://host.docker.internal:8001/api
       ANTRIAN_API_KEY: ${ANTRIAN_API_KEY:-dev-antrian-key}
@@ -55,7 +55,7 @@ services:
       - "3000:3000"
     environment:
       CI: "true"
-      NEXT_PUBLIC_API_BASE: http://localhost:8000
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
     depends_on:
       - api
   agent:
@@ -72,6 +72,7 @@ services:
       AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-key}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       PUBLIC_WEB_BASE: ${PUBLIC_WEB_BASE:-http://localhost:3000}
+      DATABASE_URL: postgresql://temujanji:temujanji@postgres:5432/temujanji
     depends_on:
       - api
   telegram:
@@ -95,6 +96,7 @@ services:
       NGROK_API: http://ngrok:4040
       KJRI_STAFF_TELEGRAM_GROUP_ID: ${KJRI_STAFF_TELEGRAM_GROUP_ID:-}
       HANDOFF_BOT_FAILURE_COOLDOWN_SEC: ${HANDOFF_BOT_FAILURE_COOLDOWN_SEC:-300}
+      DATABASE_URL: postgresql://temujanji:temujanji@postgres:5432/temujanji
     depends_on:
       - api
   ngrok:
