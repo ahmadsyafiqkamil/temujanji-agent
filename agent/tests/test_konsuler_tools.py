@@ -80,8 +80,8 @@ def test_cari_layanan_semantik_uses_injected_embedding_and_pgvector(
     sql, params = reset_konsuler_hooks[0]
     assert "konsuler.layanan_konsuler" in sql
     assert "<=>" in sql
-    assert params[0] == [0.1, 0.2, 0.3]
-    assert all(param == [0.1, 0.2, 0.3] for param in params)
+    assert params[0] == "[0.1,0.2,0.3]"
+    assert all(param == "[0.1,0.2,0.3]" for param in params)
     assert result[0]["kode_pelayanan"] == "LHR-001"
 
 
@@ -134,3 +134,91 @@ def test_simpan_interaksi_inserts_into_konsuler_chat_sessions(reset_konsuler_hoo
     assert params[0] == "session-1"
     assert params[7] == "telegram"
     assert result["id"] == "22222222-2222-2222-2222-222222222222"
+
+
+def test_simpan_interaksi_prefers_context_channel_over_argument(
+    reset_konsuler_hooks,
+):
+    reset_konsuler_hooks.clear()
+
+    def execute(sql: str, params: tuple) -> list[dict]:
+        reset_konsuler_hooks.append((sql, params))
+        return []
+
+    tools.set_execute(execute)
+    tools.set_channel("telegram")
+
+    tools.simpan_interaksi(
+        "session-1",
+        "Siti",
+        "PSP-001",
+        "syarat paspor?",
+        "bawa paspor lama",
+        "2",
+        '["cari-layanan"]',
+        "web",
+        "11111111-1111-1111-1111-111111111111",
+    )
+
+    assert reset_konsuler_hooks[0][1][7] == "telegram"
+    tools.set_channel(None)
+
+
+def test_simpan_interaksi_defaults_channel_to_web(reset_konsuler_hooks):
+    reset_konsuler_hooks.clear()
+
+    def execute(sql: str, params: tuple) -> list[dict]:
+        reset_konsuler_hooks.append((sql, params))
+        return []
+
+    tools.set_execute(execute)
+
+    tools.simpan_interaksi(
+        "session-1",
+        "Siti",
+        "PSP-001",
+        "syarat paspor?",
+        "bawa paspor lama",
+        "2",
+        '["cari-layanan"]',
+        "",
+        "11111111-1111-1111-1111-111111111111",
+    )
+
+    assert reset_konsuler_hooks[0][1][7] == "web"
+
+
+def test_get_statistik_penggunaan_queries_konsuler_chat_sessions(
+    reset_konsuler_hooks,
+):
+    reset_konsuler_hooks.clear()
+
+    def execute(sql: str, params: tuple) -> list[dict]:
+        reset_konsuler_hooks.append((sql, params))
+        return [{"layanan_diminta": "Paspor", "jumlah_interaksi": 5}]
+
+    tools.set_execute(execute)
+
+    result = tools.get_statistik_penggunaan()
+
+    sql, params = reset_konsuler_hooks[0]
+    assert "FROM konsuler.chat_sessions" in sql
+    assert "COALESCE" in sql
+    assert params == (None, None)
+    assert result[0]["jumlah_interaksi"] == 5
+
+
+def test_get_statistik_penggunaan_empty_dates_become_none(reset_konsuler_hooks):
+    reset_konsuler_hooks.clear()
+
+    def execute(sql: str, params: tuple) -> list[dict]:
+        reset_konsuler_hooks.append((sql, params))
+        return []
+
+    tools.set_execute(execute)
+
+    tools.get_statistik_penggunaan("2026-08-01", "  ")
+
+    _, params = reset_konsuler_hooks[0]
+    assert params[0] == "2026-08-01"
+    assert params[1] is None

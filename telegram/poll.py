@@ -13,10 +13,10 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-from telegram.bot import deliver_agent_result, send_telegram_message
-
 ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", override=True)
+
+from telegram.bot import handle_inbound, send_telegram_message  # noqa: E402
 
 
 async def main() -> None:
@@ -32,11 +32,16 @@ async def main() -> None:
         print(f"Polling as @{me['username']} (Ctrl+C to stop)")
 
         while True:
-            response = await client.get(
-                f"{api}/getUpdates",
-                params={"timeout": 30, "offset": offset},
-            )
-            response.raise_for_status()
+            try:
+                response = await client.get(
+                    f"{api}/getUpdates",
+                    params={"timeout": 30, "offset": offset},
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as error:
+                print(f"getUpdates error (retrying in 5s): {error}")
+                await asyncio.sleep(5)
+                continue
             updates = response.json().get("result", [])
             for update in updates:
                 offset = max(offset, int(update["update_id"]) + 1)
@@ -51,13 +56,16 @@ async def main() -> None:
                 ):
                     continue
                 try:
-                    await deliver_agent_result(chat["id"], text, sender["id"])
+                    await handle_inbound(chat["id"], text, sender["id"])
                 except Exception as error:  # noqa: BLE001 - keep poller alive
                     print(f"error handling update: {error}")
-                    await send_telegram_message(
-                        chat["id"],
-                        "Sorry, something went wrong while processing your message. Please try again shortly.",
-                    )
+                    try:
+                        await send_telegram_message(
+                            chat["id"],
+                            "Maaf, pesan Anda belum bisa diproses. Silakan coba lagi sebentar.",
+                        )
+                    except httpx.HTTPError as send_error:
+                        print(f"failed to send error reply: {send_error}")
 
 
 if __name__ == "__main__":

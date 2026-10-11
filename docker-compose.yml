@@ -76,7 +76,7 @@ services:
   telegram:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm
     working_dir: /app
-    command: uv run uvicorn telegram.bot:app --host 0.0.0.0 --port 8002
+    command: uv run uvicorn telegram.bot:app --host 0.0.0.0 --port 8002 --reload
     volumes:
       - ./:/app
       - telegram_venv:/app/.venv
@@ -104,9 +104,24 @@ services:
     command: ["http", "http://telegram:8002"]
     depends_on:
       - telegram
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@local.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+    ports:
+      - "5050:80"
+    volumes:
+      - ./scripts/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
 volumes:
   pgdata:
   web_node_modules:
   api_venv:
   agent_venv:
   telegram_venv:
+  pgadmin_data:

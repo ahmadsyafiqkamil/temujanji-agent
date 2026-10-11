@@ -85,3 +85,43 @@ async def test_cancel_appointment_uses_booking_code():
     assert json.loads(route.calls.last.request.content) == {
         "booking_code": "KJRI-ABC12345"
     }
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_requires_telegram_identity():
+    result = await tools.create_appointment(7, "Siti Aminah", "A1234567", "2026-08-10")
+
+    assert result == {
+        "error": "Identitas Telegram tidak tersedia.",
+        "status_code": 400,
+    }
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_services_unreachable_returns_indonesian_error():
+    respx.get("https://temujanji.test/api/v1/services").mock(
+        side_effect=httpx.ConnectError("boom")
+    )
+
+    result = await tools.list_services()
+
+    assert result["status_code"] == 502
+    assert result["error"] == (
+        "Layanan janji temu tidak terjangkau. Silakan coba lagi nanti."
+    )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_appointment_maps_quota_full_detail():
+    tools.set_telegram_user_id("12345")
+    respx.post("https://temujanji.test/api/v1/appointments").mock(
+        return_value=httpx.Response(409, json={"detail": "Quota is full"})
+    )
+
+    result = await tools.create_appointment(
+        7, "Siti Aminah", "A1234567", "2026-08-10"
+    )
+
+    assert result == {"error": "Kuota penuh.", "status_code": 409}

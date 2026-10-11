@@ -7,7 +7,7 @@ import io
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Never
 
 import httpx
 import qrcode
@@ -17,13 +17,18 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from agent.agent import root_agent
+from agent.konsuler.tools import set_channel
 from agent.tools import set_telegram_user_id
+from telegram.i18n import LANGUAGE_PROMPT, Locale, parse_locale, t
+from telegram.markdown_converter import md_to_html
 from telegram.routing import (
-    MENU_GREETING,
+    language_keyboard,
     menu_keyboard,
+    remove_keyboard,
     route_inbound_text,
     should_send_qr,
 )
+from telegram.session_state import routing_state_delta, write_session_state
 
 APP_NAME = "temujanji_telegram"
 WEBHOOK_BASE_URL = os.environ.get("WEBHOOK_BASE_URL", "")
@@ -58,7 +63,12 @@ def render_qr_png(payload: str) -> bytes:
 async def send_telegram_message(
     chat_id: int, text: str, *, reply_markup: dict[str, Any] | None = None
 ) -> None:
-    payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+    html_text = md_to_html(text)
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": html_text,
+        "parse_mode": "HTML",
+    }
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -66,19 +76,30 @@ async def send_telegram_message(
             f"https://api.telegram.org/bot{_telegram_token()}/sendMessage",
             json=payload,
         )
+        if response.status_code != 200:
+            # Fallback: resend as plain text without formatting
+            payload["text"] = text
+            payload.pop("parse_mode", None)
+            plain = await client.post(
+                f"https://api.telegram.org/bot{_telegram_token()}/sendMessage",
+                json=payload,
+            )
+            plain.raise_for_status()
+            return
         response.raise_for_status()
 
 
 async def send_telegram_qr(
-    chat_id: int, *, qr_payload: str, booking_code: str, magic_url: str
+    chat_id: int,
+    *,
+    qr_payload: str,
+    booking_code: str,
+    magic_url: str,
+    locale: Locale | None = None,
 ) -> None:
     """Send check-in QR image plus caption with booking code and magic link."""
     png = render_qr_png(qr_payload)
-    caption = (
-        f"Check-in QR for {booking_code}\n"
-        f"Show this code to staff on your appointment day.\n"
-        f"Details: {magic_url}"
-    )
+    caption = t(locale, "qr_caption", code=booking_code, url=magic_url)
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             f"https://api.telegram.org/bot{_telegram_token()}/sendPhoto",
@@ -89,7 +110,12 @@ async def send_telegram_qr(
 
 
 async def run_agent(
-    user_id: int, chat_id: int, text: str
+    user_id: int,
+    chat_id: int,
+    text: str,
+    *,
+    track: str | None = None,
+    locale: Locale | None = None,
 ) -> tuple[list[str], list[dict[str, str]]]:
     """Run one message through ADK; return text replies and booking payloads."""
     session_id = f"telegram-{chat_id}"
@@ -99,22 +125,26 @@ async def run_agent(
         user_id=adk_user_id,
         session_id=session_id,
     )
+    state = routing_state_delta(track=track, locale=locale)
     if session is None:
         session = await session_service.create_session(
             app_name=APP_NAME,
             user_id=adk_user_id,
             session_id=session_id,
-            state={"track": None},
+            state=state,
         )
 
     set_telegram_user_id(str(user_id))
+    set_channel("telegram")
     replies: list[str] = []
     bookings: list[dict[str, str]] = []
+    logger.info("run_agent start: chat=%s track=%s locale=%s text=%r", chat_id, track, locale, text[:80])
     message = types.Content(role="user", parts=[types.Part.from_text(text=text)])
     async for event in runner.run_async(
         user_id=adk_user_id,
         session_id=session_id,
         new_message=message,
+        state_delta=state,
     ):
         for function_response in event.get_function_responses():
             response = function_response.response or {}
@@ -146,6 +176,12 @@ async def run_agent(
             for part in event.content.parts or []:
                 if part.text:
                     replies.append(part.text)
+    logger.info(
+        "run_agent done: chat=%s replies=%d bookings=%d",
+        chat_id,
+        len(replies),
+        len(bookings),
+    )
     return replies, bookings
 
 
@@ -158,39 +194,67 @@ async def handle_inbound(chat_id: int, text: str, user_id: int) -> None:
         session_id=session_id,
     )
     current_track = None
+    current_locale = None
     if session is not None:
         current_track = session.state.get("track")
-    route = route_inbound_text(text, current_track)
+        current_locale = parse_locale(session.state.get("locale"))
+    route = route_inbound_text(text, current_track, current_locale)
+    logger.info("route: chat=%s action=%s track=%s", chat_id, route.action, route.track)
+    effective_locale = route.locale if route.locale is not None else current_locale
     if session is None:
         session = await session_service.create_session(
             app_name=APP_NAME,
             user_id=adk_user_id,
             session_id=session_id,
-            state={"track": route.track},
+            state=routing_state_delta(
+                track=route.track, locale=effective_locale
+            ),
         )
     else:
-        session.state["track"] = route.track
+        await write_session_state(
+            session_service,
+            session,
+            track=route.track,
+            locale=effective_locale,
+        )
 
-    if route.action == "show_menu":
+    if route.action == "show_language":
         await send_telegram_message(
-            chat_id, MENU_GREETING, reply_markup=menu_keyboard()
+            chat_id, LANGUAGE_PROMPT, reply_markup=language_keyboard()
         )
         return
-
-    replies, bookings = await run_agent(user_id, chat_id, text)
-    for reply in replies:
+    if route.action == "show_menu":
+        menu_locale = effective_locale or "id"
         await send_telegram_message(
-            chat_id, reply, reply_markup=menu_keyboard()
-        )
-    for booking in bookings:
-        if not should_send_qr(route.track, booking):
-            continue
-        await send_telegram_qr(
             chat_id,
-            qr_payload=booking["qr_payload"],
-            booking_code=booking["booking_code"],
-            magic_url=booking["magic_url"],
+            t(menu_locale, "greeting"),
+            reply_markup=menu_keyboard(menu_locale),
         )
+        return
+    if route.action == "run_agent":
+        replies, bookings = await run_agent(
+            user_id,
+            chat_id,
+            text,
+            track=route.track,
+            locale=effective_locale,
+        )
+        hidden = remove_keyboard()
+        for reply in replies:
+            await send_telegram_message(chat_id, reply, reply_markup=hidden)
+        for booking in bookings:
+            if not should_send_qr(route.track, booking):
+                continue
+            await send_telegram_qr(
+                chat_id,
+                qr_payload=booking["qr_payload"],
+                booking_code=booking["booking_code"],
+                magic_url=booking["magic_url"],
+                locale=effective_locale,
+            )
+        return
+    unreachable: Never = route.action
+    raise ValueError(f"unhandled route action: {unreachable}")
 
 
 async def set_webhook(url: str) -> None:
@@ -287,9 +351,17 @@ async def webhook(
     except Exception as error:
         logger.exception("Failed to process Telegram update: %s", error)
         try:
+            error_locale: Locale | None = None
+            failed_session = await session_service.get_session(
+                app_name=APP_NAME,
+                user_id=f"telegram-{sender['id']}",
+                session_id=f"telegram-{chat['id']}",
+            )
+            if failed_session is not None:
+                error_locale = parse_locale(failed_session.state.get("locale"))
             await send_telegram_message(
                 chat["id"],
-                "Sorry, I could not process your message right now. Please try again shortly.",
+                t(error_locale, "error"),
             )
         except Exception:
             logger.exception("Failed to send error reply to Telegram")

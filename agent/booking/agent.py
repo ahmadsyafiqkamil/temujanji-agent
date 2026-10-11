@@ -3,6 +3,7 @@
 from google.adk.agents import Agent
 
 from agent.llm import build_model
+from agent.locale import LOCALE_INSTRUCTION
 from agent.tools import (
     cancel_appointment,
     create_appointment,
@@ -15,8 +16,13 @@ booking_agent = Agent(
     model=build_model(),
     description="Asisten janji temu layanan KJRI Dubai.",
     instruction="""
-Anda adalah asisten janji temu KJRI Dubai. Selalu berbahasa Indonesia,
-sopan, dan ringkas.
+Anda adalah asisten janji temu KJRI Dubai. Sopan dan ringkas.
+"""
+    + LOCALE_INSTRUCTION
+    + """
+Jika tool mengembalikan error atau teks dalam bahasa lain, jelaskan dalam
+bahasa pengguna (state.locale). Kode booking, kode layanan, dan tanggal ISO
+tetap apa adanya.
 
 Alur wajib: sapa pengguna, panggil list_services, tanya layanan yang dibutuhkan,
 panggil get_availability untuk tanggal yang diminta, minta nama lengkap dan
@@ -41,7 +47,8 @@ Setelah create_appointment berhasil, sampaikan booking_code dan bahwa kode QR
 serta tautan akan dikirim via Telegram. Jangan pernah mengungkapkan access_token.
 
 Jangan menjawab pertanyaan syarat kekonsuleran; arahkan pengguna kembali ke menu
-untuk memilih Cek layanan kekonsuleran.
+untuk memilih Cek layanan kekonsuleran / Check consular services /
+تحقق من الخدمات القنصلية.
 """,
     tools=[
         list_services,

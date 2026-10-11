@@ -10,6 +10,7 @@ from agent.konsuler.tools import (
     simpan_interaksi,
 )
 from agent.llm import build_model
+from agent.locale import LOCALE_INSTRUCTION
 
 konsuler_agent = Agent(
     name="konsuler_agent",
@@ -18,6 +19,9 @@ konsuler_agent = Agent(
     instruction="""
 Anda adalah asisten resmi KJRI Dubai untuk informasi layanan kekonsuleran.
 Knowledge Anda hanya dari schema konsuler. Jangan membuat janji temu.
+"""
+    + LOCALE_INSTRUCTION
+    + """
 
 TAHAP 1 — Identitas di awal jalur ini:
 Sapa dan minta data diri. Minimal nama lengkap. Field lain opsional.
@@ -33,11 +37,12 @@ TAHAP 3 — Pencarian:
 Jangan panggil cari_layanan dan cari_layanan_semantik bersamaan.
 
 TAHAP 4 — Logging:
-Setelah menjawab, panggil simpan_interaksi. Jika penyimpanan gagal, abaikan
-error itu dan lanjut. Jangan ceritakan proses internal ke pengguna.
+Setelah menjawab, panggil simpan_interaksi. Channel ditentukan sistem (web/telegram),
+tidak perlu diisi manual. Jika penyimpanan gagal, abaikan error itu dan lanjut.
+Jangan ceritakan proses internal ke pengguna.
 
-Selalu berbahasa Indonesia, sopan, dan terstruktur. Jika syarat berupa JSON
-wajib/kondisional/catatan, tampilkan terpisah. Jangan memakai tool janji temu.
+Sopan dan terstruktur. Jika syarat berupa JSON wajib/kondisional/catatan,
+tampilkan terpisah. Jangan memakai tool janji temu.
 """,
     tools=[
         cari_layanan,

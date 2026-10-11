@@ -29,8 +29,9 @@ def test_booking_agent_only_exposes_appointment_tools():
     assert "cari_layanan" not in _tool_names(booking_agent)
     instruction = booking_agent.instruction.lower()
     assert "janji temu" in instruction
-    assert "bahasa indonesia" in instruction
-    assert "always communicate in clear" not in instruction
+    assert "{locale}" in booking_agent.instruction
+    assert "meskipun pengguna menulis" not in instruction
+    assert "jangan menempel kalimat inggris" not in instruction
 
 
 def test_konsuler_agent_only_exposes_konsuler_tools():
@@ -43,7 +44,15 @@ def test_konsuler_agent_only_exposes_konsuler_tools():
         "simpan_interaksi",
     }
     assert "create_appointment" not in _tool_names(konsuler_agent)
-    assert (
-        "schema konsuler" in konsuler_agent.instruction.lower()
-        or "kekonsuleran" in konsuler_agent.instruction.lower()
-    )
+    instruction = konsuler_agent.instruction.lower()
+    assert "schema konsuler" in instruction or "kekonsuleran" in instruction
+    assert "{locale}" in konsuler_agent.instruction
+
+
+def test_root_agent_follows_locale_and_all_menu_labels():
+    instruction = root_agent.instruction.lower()
+    assert "{locale}" in root_agent.instruction
+    assert "check consular services" in instruction
+    assert "book appointment" in instruction
+    assert "تحقق من الخدمات القنصلية" in root_agent.instruction
+    assert "حجز موعد" in root_agent.instruction

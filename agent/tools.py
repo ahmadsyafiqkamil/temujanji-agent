@@ -28,6 +28,28 @@ def _api_key() -> str:
     return os.environ.get("AGENT_API_KEY", "dev-agent-key")
 
 
+_APPOINTMENT_ERROR_ID = {
+    "Quota is full": "Kuota penuh.",
+    "Quota is not open for this service and day": (
+        "Kuota belum dibuka untuk layanan dan tanggal itu."
+    ),
+    "Active appointment already exists": "Anda sudah punya janji temu aktif.",
+    "Appointment date cannot be in the past": (
+        "Tanggal janji temu tidak boleh di masa lalu."
+    ),
+    "Only booked appointments can be cancelled": (
+        "Hanya janji temu yang masih aktif yang bisa dibatalkan."
+    ),
+}
+
+
+def _citizen_error(detail: object) -> str:
+    """Map known English appointment details; leave unknown strings unchanged."""
+    if not isinstance(detail, str):
+        return str(detail)
+    return _APPOINTMENT_ERROR_ID.get(detail, detail)
+
+
 async def _request(
     method: str,
     path: str,
@@ -52,10 +74,15 @@ async def _request(
             detail = error.response.json().get("detail", detail)
         except ValueError:
             pass
-        return {"error": str(detail), "status_code": error.response.status_code}
+        return {
+            "error": _citizen_error(detail),
+            "status_code": error.response.status_code,
+        }
     except httpx.HTTPError:
         return {
-            "error": "The appointment service is unreachable. Please try again later.",
+            "error": (
+                "Layanan janji temu tidak terjangkau. Silakan coba lagi nanti."
+            ),
             "status_code": 502,
         }
 
@@ -95,7 +122,7 @@ async def create_appointment(
     telegram_user_id = _telegram_user_id.get()
     if telegram_user_id is None:
         return {
-            "error": "Telegram user identity is unavailable.",
+            "error": "Identitas Telegram tidak tersedia.",
             "status_code": 400,
         }
     return await _request(

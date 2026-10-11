@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from typing import Any
 
 ExecuteFn = Callable[[str, tuple[Any, ...]], list[dict[str, Any]]]
@@ -12,11 +14,12 @@ EmbedFn = Callable[[str], Sequence[float]]
 
 _execute: ExecuteFn | None = None
 _embedder: EmbedFn | None = None
+_channel: ContextVar[str | None] = ContextVar("konsuler_channel", default=None)
 
 CARI_LAYANAN_SQL = """
 SELECT kode_pelayanan, nama_pelayanan, biaya_aed, biaya_keterangan
 FROM konsuler.layanan_konsuler
-WHERE LOWER(nama_pelayanan) LIKE '%' || LOWER(%s) || '%'
+WHERE LOWER(nama_pelayanan) LIKE '%%' || LOWER(%s) || '%%'
 ORDER BY nama_pelayanan
 LIMIT 10
 """
@@ -24,17 +27,17 @@ LIMIT 10
 GET_DETAIL_SQL = """
 SELECT kode_pelayanan, nama_pelayanan, syarat, biaya_aed, biaya_keterangan
 FROM konsuler.layanan_konsuler
-WHERE LOWER(nama_pelayanan) LIKE '%' || LOWER(%s) || '%'
+WHERE LOWER(nama_pelayanan) LIKE '%%' || LOWER(%s) || '%%'
    OR UPPER(kode_pelayanan) = UPPER(%s)
 LIMIT 5
 """
 
 CARI_SEMANTIK_SQL = """
 SELECT kode_pelayanan, nama_pelayanan, biaya_aed, biaya_keterangan,
-       1 - (embedding <=> %s) AS similarity_score
+       1 - (embedding <=> %s::vector) AS similarity_score
 FROM konsuler.layanan_konsuler
 WHERE embedding IS NOT NULL
-ORDER BY embedding <=> %s
+ORDER BY embedding <=> %s::vector
 LIMIT 5
 """
 
@@ -54,6 +57,20 @@ INSERT INTO konsuler.chat_sessions (
 RETURNING id, created_at
 """
 
+GET_STATISTIK_SQL = """
+SELECT layanan_diminta,
+       COUNT(*) AS jumlah_interaksi,
+       MIN(created_at) AS pertama_ditanya,
+       MAX(created_at) AS terakhir_ditanya
+FROM konsuler.chat_sessions
+WHERE layanan_diminta IS NOT NULL
+  AND created_at >= COALESCE(%s::timestamptz, '1970-01-01'::timestamptz)
+  AND created_at <= COALESCE(%s::timestamptz, NOW())
+GROUP BY layanan_diminta
+ORDER BY jumlah_interaksi DESC
+LIMIT 20
+"""
+
 
 def set_execute(fn: ExecuteFn | None) -> None:
     global _execute
@@ -63,6 +80,11 @@ def set_execute(fn: ExecuteFn | None) -> None:
 def set_embedder(fn: EmbedFn | None) -> None:
     global _embedder
     _embedder = fn
+
+
+def set_channel(channel: str | None) -> None:
+    """Bind the source channel (e.g. 'telegram') for the current invocation."""
+    _channel.set(channel)
 
 
 def _run(sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -99,6 +121,17 @@ def _embed(text: str) -> Sequence[float]:
     raise RuntimeError("konsuler embedder is not configured")
 
 
+def _embed_or_none(text: str) -> Sequence[float] | None:
+    if _embedder is not None:
+        return _embedder(text)
+    return None
+
+
+def _vector_literal(vector: Sequence[float]) -> str:
+    """Render a float sequence as a pgvector literal string, e.g. [0.1,0.2]."""
+    return "[" + ",".join(map(str, vector)) + "]"
+
+
 def cari_layanan(keyword: str) -> list[dict[str, Any]]:
     """Cari layanan konsuler KJRI Dubai berdasarkan kata kunci nama."""
     return _run(CARI_LAYANAN_SQL, (keyword,))
@@ -111,15 +144,42 @@ def get_detail_layanan(kode_atau_nama: str) -> list[dict[str, Any]]:
 
 def cari_layanan_semantik(query: str) -> list[dict[str, Any]]:
     """Cari layanan konsuler dengan embedding + jarak pgvector."""
-    vector = list(_embed(query))
-    return _run(CARI_SEMANTIK_SQL, (vector, vector))
+    vector = _embed_or_none(query)
+    if vector is None:
+        return []
+    literal = _vector_literal(vector)
+    return _run(CARI_SEMANTIK_SQL, (literal, literal))
+
+
+def _coerce_json_array(value: str) -> str:
+    """Return value as a JSONB-safe array string, or '[]' when unparseable."""
+    if not value:
+        return "[]"
+    try:
+        parsed = json.loads(value)
+        return json.dumps(parsed)
+    except (ValueError, TypeError):
+        return json.dumps([value])
+
+
+def _coerce_uuid(value: str | None) -> str | None:
+    """Return value only when it is a valid UUID, else None."""
+    if not value:
+        return None
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, AttributeError):
+        return None
 
 
 def simpan_identitas(
     session_id: str, nama_lengkap: str, data_tambahan: str = "{}"
 ) -> dict[str, Any]:
     """Simpan identitas WNI ke konsuler.pengguna."""
-    extra = json.loads(data_tambahan or "{}")
+    try:
+        extra = json.loads(data_tambahan or "{}")
+    except (ValueError, TypeError):
+        extra = {}
     rows = _run(
         SIMPAN_IDENTITAS_SQL,
         (
@@ -150,6 +210,11 @@ def simpan_interaksi(
     pengguna_id: str,
 ) -> dict[str, Any]:
     """Catat interaksi chatbot ke konsuler.chat_sessions."""
+    try:
+        jumlah = int(jumlah_pesan)
+    except (ValueError, TypeError):
+        jumlah = 1
+    resolved_channel = _channel.get() or channel or "web"
     rows = _run(
         SIMPAN_INTERAKSI_SQL,
         (
@@ -158,10 +223,31 @@ def simpan_interaksi(
             layanan_diminta,
             pesan_user,
             pesan_agent,
-            int(jumlah_pesan),
-            tools_dipanggil,
-            channel,
-            pengguna_id or None,
+            jumlah,
+            _coerce_json_array(tools_dipanggil),
+            resolved_channel,
+            _coerce_uuid(pengguna_id),
         ),
     )
     return rows[0] if rows else {}
+
+
+def _coerce_optional_date(value: str | None) -> str | None:
+    """Return a non-empty ISO date string, or None for SQL NULL."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def get_statistik_penggunaan(
+    dari_tanggal: str = "", sampai_tanggal: str = ""
+) -> list[dict[str, Any]]:
+    """Statistik layanan yang paling sering ditanyakan (admin)."""
+    return _run(
+        GET_STATISTIK_SQL,
+        (
+            _coerce_optional_date(dari_tanggal),
+            _coerce_optional_date(sampai_tanggal),
+        ),
+    )

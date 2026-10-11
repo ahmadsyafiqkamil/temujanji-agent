@@ -50,6 +50,7 @@ Layanan:
 | http://localhost:3000 | Web (user / petugas / admin) |
 | http://localhost:8011 | ADK web (jika service `agent` dijalankan) |
 | http://localhost:8002 | Telegram webhook (jika service `telegram` dijalankan) |
+| http://localhost:5050 | pgAdmin (jika service `pgadmin` dijalankan) |
 
 Login admin setelah bootstrap:
 
